@@ -12,17 +12,19 @@ aws_access_key_id = config.AWS_ACCESS_KEY_ID
 aws_secret_access_key = config.AWS_SECRET_ACCESS_KEY
 
 utc = pytz.UTC
-local_tz = pytz.timezone('Etc/GMT+5')  # Adjust time to account for UTC 
+local_tz = pytz.timezone('Etc/GMT+6')  # Adjust time to account for UTC 
 
-def delete_files(bucket, start, end, access_key, secret_key):
+def delete_files(bucket, start, end, access_key, secret_key, subfolder=''):
     session = boto3.Session(
         aws_access_key_id=access_key,
         aws_secret_access_key=secret_key
     )
     s3 = session.client('s3')
-
+    
+    if subfolder and not subfolder.endswith('/'):
+        subfolder += '/'
     paginator = s3.get_paginator('list_objects_v2')
-    page_iterator = paginator.paginate(Bucket=bucket)
+    page_iterator = paginator.paginate(Bucket=bucket, Prefix=subfolder)
 
     try:
         for page in page_iterator:
@@ -36,7 +38,7 @@ def delete_files(bucket, start, end, access_key, secret_key):
     except Exception as e:
         messagebox.showerror("Error", f"An error occurred: {e}")
 
-def download_and_zip_files(bucket, start, end, access_key, secret_key):
+def download_and_zip_files(bucket, start, end, access_key, secret_key, subfolder=''):
     session = boto3.Session(
         aws_access_key_id=access_key,
         aws_secret_access_key=secret_key
@@ -44,7 +46,10 @@ def download_and_zip_files(bucket, start, end, access_key, secret_key):
     s3 = session.client('s3')
 
     paginator = s3.get_paginator('list_objects_v2')
-    page_iterator = paginator.paginate(Bucket=bucket)
+    
+    if subfolder and not subfolder.endswith('/'):
+        subfolder += '/'
+    page_iterator = paginator.paginate(Bucket=bucket, Prefix=subfolder)
 
     download_dir = f"downloads_{start.strftime('%Y%m%d')}"
     if not os.path.exists(download_dir):
@@ -61,23 +66,29 @@ def download_and_zip_files(bucket, start, end, access_key, secret_key):
                     print(f"Considering file: {obj['Key']}, Last Modified (UTC): {last_modified_utc}")
                     
                     if start <= last_modified_utc <= end:
+                        file_path = os.path.join(download_dir, obj['Key'].replace('/', os.sep))
+                        file_dir = os.path.dirname(file_path)
+
+                        if not os.path.exists(file_dir):
+                            os.makedirs(file_dir)
+
                         print(f"Downloading file: {obj['Key']}")
-                        file_path = os.path.join(download_dir, obj['Key'])
                         s3.download_file(bucket, obj['Key'], file_path)
 
         zip_name = f"{download_dir}.zip"
         with zipfile.ZipFile(zip_name, 'w') as zipf:
             for root, dirs, files in os.walk(download_dir):
                 for file in files:
-                    zipf.write(os.path.join(root, file), file)
+                    zipf.write(os.path.join(root, file), os.path.relpath(os.path.join(root, file), download_dir))
         print(f"Created zip archive: {zip_name}")
 
     except Exception as e:
         print(f"An error occurred: {e}")
 
+
 def on_delete_click():
     utc = pytz.UTC
-    local_tz = pytz.timezone('Etc/GMT+5')  
+    local_tz = pytz.timezone('Etc/GMT+6')  
     
     # Convert the user input for dates into datetime objects in your local timezone
     start_date_local = local_tz.localize(datetime.strptime(start_date_entry.get() + " 00:00:00", '%Y-%m-%d %H:%M:%S'))
@@ -88,8 +99,8 @@ def on_delete_click():
     end_date = end_date_local.astimezone(utc)
     
     bucket = bucket_entry.get()
-    
-    delete_files(bucket, start_date, end_date, aws_access_key_id, aws_secret_access_key)
+    subfolder = subfolder_entry.get()
+    delete_files(bucket, start_date, end_date, aws_access_key_id, aws_secret_access_key, subfolder)
 
 def on_download_and_zip_click():
     start_date_local = local_tz.localize(datetime.strptime(start_date_entry.get() + " 00:00:00", '%Y-%m-%d %H:%M:%S'))
@@ -97,7 +108,8 @@ def on_download_and_zip_click():
     start_date = start_date_local.astimezone(utc)
     end_date = end_date_local.astimezone(utc)
     bucket = bucket_entry.get()  
-    download_and_zip_files(bucket, start_date, end_date, aws_access_key_id, aws_secret_access_key)
+    subfolder = subfolder_entry.get()
+    download_and_zip_files(bucket, start_date, end_date, aws_access_key_id, aws_secret_access_key, subfolder)
 
 # GUI
 root = tk.Tk()
@@ -106,6 +118,10 @@ root.title("AWS S3 File Manager")
 tk.Label(root, text="Bucket Name").pack()
 bucket_entry = tk.Entry(root)
 bucket_entry.pack()
+
+tk.Label(root, text="Subfolder (optional)").pack()
+subfolder_entry = tk.Entry(root)
+subfolder_entry.pack()
 
 tk.Label(root, text="Start Date (YYYY-MM-DD)").pack()
 start_date_entry = tk.Entry(root)
@@ -122,3 +138,4 @@ download_zip_button = tk.Button(root, text="Download and Zip Files", command=on_
 download_zip_button.pack()
 
 root.mainloop()
+
